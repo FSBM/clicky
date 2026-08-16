@@ -10,6 +10,7 @@
 
 import AVFoundation
 import Foundation
+import Combine
 
 @MainActor
 final class LocalTTSClient: NSObject, ObservableObject {
