@@ -68,17 +68,21 @@ final class CompanionManager: ObservableObject {
     // Response text is now displayed inline on the cursor overlay via
     // streamingResponseText, so no separate response overlay manager is needed.
 
-    /// Base URL for the Cloudflare Worker proxy. All API requests route
-    /// through this so keys never ship in the app binary.
-    private static let workerBaseURL = "https://your-worker-name.your-subdomain.workers.dev"
+    /// Local Ollama endpoint for the Anthropic-compatible Messages API.
+    /// Replaces the Cloudflare Worker proxy — all inference runs on-device.
+    private static let ollamaMessagesURL = "http://127.0.0.1:11434/v1/messages"
 
     private lazy var claudeAPI: ClaudeAPI = {
-        return ClaudeAPI(proxyURL: "\(Self.workerBaseURL)/chat", model: selectedModel)
+        return ClaudeAPI(proxyURL: Self.ollamaMessagesURL, model: selectedModel)
     }()
 
-    private lazy var elevenLabsTTSClient: ElevenLabsTTSClient = {
-        return ElevenLabsTTSClient(proxyURL: "\(Self.workerBaseURL)/tts")
+    private lazy var localTTSClient: LocalTTSClient = {
+        return LocalTTSClient()
     }()
+
+    /// Optional web search client for research queries. Silently skips
+    /// when no API keys are configured — the app stays fully functional offline.
+    private let webSearchClient = WebSearchClient()
 
     /// Conversation history so Claude remembers prior exchanges within a session.
     /// Each entry is the user's transcript and Claude's response.
@@ -108,7 +112,7 @@ final class CompanionManager: ObservableObject {
     @Published private(set) var isOverlayVisible: Bool = false
 
     /// The Claude model used for voice responses. Persisted to UserDefaults.
-    @Published var selectedModel: String = UserDefaults.standard.string(forKey: "selectedClaudeModel") ?? "claude-sonnet-4-6"
+    @Published var selectedModel: String = UserDefaults.standard.string(forKey: "selectedClaudeModel") ?? "qwen3.5:4b"
 
     func setSelectedModel(_ model: String) {
         selectedModel = model
@@ -493,7 +497,7 @@ final class CompanionManager: ObservableObject {
 
             // Cancel any in-progress response and TTS from a previous utterance
             currentResponseTask?.cancel()
-            elevenLabsTTSClient.stopPlayback()
+            localTTSClient.stopPlayback()
             clearDetectedElementLocation()
 
             // Dismiss the onboarding prompt if it's showing
@@ -574,6 +578,12 @@ final class CompanionManager: ObservableObject {
     - user asks what html is: "html stands for hypertext markup language, it's basically the skeleton of every web page. curious how it connects to the css you're looking at? [POINT:none]"
     - user asks how to commit in xcode: "see that source control menu up top? click that and hit commit, or you can use command option c as a shortcut. [POINT:285,11:source control]"
     - element is on screen 2 (not where cursor is): "that's over on your other monitor — see the terminal window? [POINT:400,300:terminal:screen2]"
+
+    answer length:
+    keep answers to two to four sentences unless the user explicitly asks for more detail. be dense and direct — every sentence should carry useful information. do not pad with filler or repeat what the user already knows.
+
+    coordinate format reminder:
+    when pointing at a UI element, always end your response with exactly one tag: [POINT:x,y:label] using integer pixel coordinates from the screenshot's top-left origin. if pointing would not help, end with [POINT:none]. example: "click the green run button in the toolbar. [POINT:520,38:run button]"
     """
 
     // MARK: - AI Response Pipeline
@@ -585,13 +595,23 @@ final class CompanionManager: ObservableObject {
     /// the buddy to fly to that element on screen.
     private func sendTranscriptToClaudeWithScreenshot(transcript: String) {
         currentResponseTask?.cancel()
-        elevenLabsTTSClient.stopPlayback()
+        localTTSClient.stopPlayback()
 
         currentResponseTask = Task {
             // Stay in processing (spinner) state — no streaming text displayed
             voiceState = .processing
 
             do {
+                // If the transcript looks like a search query and web search
+                // keys are available, prepend web context to the prompt.
+                var userPromptWithContext = transcript
+                if webSearchClient.isSearchQuery(transcript) {
+                    if let webContext = await webSearchClient.fetchSearchContext(for: transcript) {
+                        userPromptWithContext = webContext + "\n" + transcript
+                        print("🔍 WebSearch: prepended context to prompt")
+                    }
+                }
+
                 // Capture all connected screens so the AI has full context
                 let screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
 
@@ -614,7 +634,7 @@ final class CompanionManager: ObservableObject {
                     images: labeledImages,
                     systemPrompt: Self.companionVoiceResponseSystemPrompt,
                     conversationHistory: historyForAPI,
-                    userPrompt: transcript,
+                    userPrompt: userPromptWithContext,
                     onTextChunk: { _ in
                         // No streaming text display — spinner stays until TTS plays
                     }
@@ -697,18 +717,12 @@ final class CompanionManager: ObservableObject {
 
                 ClickyAnalytics.trackAIResponseReceived(response: spokenText)
 
-                // Play the response via TTS. Keep the spinner (processing state)
-                // until the audio actually starts playing, then switch to responding.
+                // Play the response via on-device TTS. Keep the spinner
+                // (processing state) until the audio actually starts playing,
+                // then switch to responding.
                 if !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    do {
-                        try await elevenLabsTTSClient.speakText(spokenText)
-                        // speakText returns after player.play() — audio is now playing
-                        voiceState = .responding
-                    } catch {
-                        ClickyAnalytics.trackTTSError(error: error.localizedDescription)
-                        print("⚠️ ElevenLabs TTS error: \(error)")
-                        speakCreditsErrorFallback()
-                    }
+                    await localTTSClient.speakText(spokenText)
+                    voiceState = .responding
                 }
             } catch is CancellationError {
                 // User spoke again — response was interrupted
@@ -735,7 +749,7 @@ final class CompanionManager: ObservableObject {
         transientHideTask?.cancel()
         transientHideTask = Task {
             // Wait for TTS audio to finish playing
-            while elevenLabsTTSClient.isPlaying {
+            while localTTSClient.isPlaying {
                 try? await Task.sleep(nanoseconds: 200_000_000)
                 guard !Task.isCancelled else { return }
             }
