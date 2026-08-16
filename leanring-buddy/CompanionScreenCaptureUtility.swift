@@ -19,15 +19,39 @@ struct CompanionScreenCapture {
     let displayFrame: CGRect
     let screenshotWidthInPixels: Int
     let screenshotHeightInPixels: Int
+    let cropOffsetInPixels: CGPoint?
 }
 
 @MainActor
 enum CompanionScreenCaptureUtility {
 
+    static func convertToScreenshotPixelSpace(
+        appKitRect: CGRect,
+        displayFrame: CGRect,
+        screenshotWidth: Int,
+        screenshotHeight: Int
+    ) -> CGRect {
+        // AppKit has bottom-left origin. Display frame has bottom-left origin.
+        // 1. Convert to display-local (top-left origin).
+        let localX = appKitRect.minX - displayFrame.minX
+        let localY = displayFrame.maxY - appKitRect.maxY // flip Y
+        let localRect = CGRect(x: localX, y: localY, width: appKitRect.width, height: appKitRect.height)
+        
+        // 2. Scale to screenshot pixels
+        let scale = CGFloat(screenshotWidth) / displayFrame.width
+        
+        return CGRect(
+            x: localRect.minX * scale,
+            y: localRect.minY * scale,
+            width: localRect.width * scale,
+            height: localRect.height * scale
+        )
+    }
+
     /// Captures all connected displays as JPEG data, labeling each with
     /// whether the user's cursor is on that screen. This gives the AI
     /// full context across multiple monitors.
-    static func captureAllScreensAsJPEG() async throws -> [CompanionScreenCapture] {
+    static func captureAllScreensAsJPEG(marqueeRect: CGRect? = nil) async throws -> [CompanionScreenCapture] {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
 
         guard !content.displays.isEmpty else {
@@ -96,14 +120,40 @@ enum CompanionScreenCaptureUtility {
                 configuration: configuration
             )
 
-            guard let jpegData = NSBitmapImageRep(cgImage: cgImage)
+            var finalCGImage = cgImage
+            var cropOffset: CGPoint? = nil
+            var finalWidth = configuration.width
+            var finalHeight = configuration.height
+
+            if let marquee = marqueeRect {
+                if displayFrame.intersects(marquee) {
+                    let pixelRect = Self.convertToScreenshotPixelSpace(
+                        appKitRect: marquee,
+                        displayFrame: displayFrame,
+                        screenshotWidth: configuration.width,
+                        screenshotHeight: configuration.height
+                    )
+                    let safeCropRect = pixelRect.intersection(CGRect(x: 0, y: 0, width: configuration.width, height: configuration.height))
+                    if let cropped = cgImage.cropping(to: safeCropRect) {
+                        finalCGImage = cropped
+                        cropOffset = safeCropRect.origin
+                        finalWidth = Int(safeCropRect.width)
+                        finalHeight = Int(safeCropRect.height)
+                    }
+                } else {
+                    // Skip screens that don't contain the marquee
+                    continue
+                }
+            }
+
+            guard let jpegData = NSBitmapImageRep(cgImage: finalCGImage)
                     .representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else {
                 continue
             }
 
             let screenLabel: String
-            if sortedDisplays.count == 1 {
-                screenLabel = "user's screen (cursor is here)"
+            if sortedDisplays.count == 1 || marqueeRect != nil {
+                screenLabel = marqueeRect != nil ? "user's screen (cropped to selection)" : "user's screen (cursor is here)"
             } else if isCursorScreen {
                 screenLabel = "screen \(displayIndex + 1) of \(sortedDisplays.count) — cursor is on this screen (primary focus)"
             } else {
@@ -117,8 +167,9 @@ enum CompanionScreenCaptureUtility {
                 displayWidthInPoints: Int(displayFrame.width),
                 displayHeightInPoints: Int(displayFrame.height),
                 displayFrame: displayFrame,
-                screenshotWidthInPixels: configuration.width,
-                screenshotHeightInPixels: configuration.height
+                screenshotWidthInPixels: finalWidth,
+                screenshotHeightInPixels: finalHeight,
+                cropOffsetInPixels: cropOffset
             ))
         }
 

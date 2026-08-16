@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		02D71470DFED4EFB9C13D76D /* KokoroTTSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 925F410D84334AF686D1FDBA /* KokoroTTSClient.swift */; };
+		1177E092738A44CCBDBE0821 /* LocalTTSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C44AB4550EA6454EA4029D2A /* LocalTTSClient.swift */; };
+		8FD88E64E9AE40B9AB9A3746 /* WebSearchClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 567532630EE94933AD21F7A9 /* WebSearchClient.swift */; };
 		AA00BB032F6500030039DA55 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = AA00BB022F6500020039DA55 /* Sparkle */; };
 		AA00BB062F6500060039DA55 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = AA00BB052F6500050039DA55 /* PostHog */; };
 /* End PBXBuildFile section */
@@ -32,6 +35,9 @@
 		28F22CBF2F56440300A0FC59 /* Clicky.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Clicky.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		28F22CCC2F56440300A0FC59 /* leanring-buddyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "leanring-buddyTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		28F22CD62F56440300A0FC59 /* leanring-buddyUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "leanring-buddyUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		567532630EE94933AD21F7A9 /* WebSearchClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSearchClient.swift; sourceTree = "<group>"; };
+		925F410D84334AF686D1FDBA /* KokoroTTSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KokoroTTSClient.swift; sourceTree = "<group>"; };
+		C44AB4550EA6454EA4029D2A /* LocalTTSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalTTSClient.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -79,9 +85,21 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		1398F47ACB584147BA30B7FA /* Manually Added Files */ = {
+			isa = PBXGroup;
+			children = (
+				C44AB4550EA6454EA4029D2A /* LocalTTSClient.swift */,
+				567532630EE94933AD21F7A9 /* WebSearchClient.swift */,
+				925F410D84334AF686D1FDBA /* KokoroTTSClient.swift */,
+			);
+			name = "Manually Added Files";
+			path = "leanring-buddy";
+			sourceTree = "<group>";
+		};
 		28F22CB62F56440300A0FC59 = {
 			isa = PBXGroup;
 			children = (
+				1398F47ACB584147BA30B7FA /* Manually Added Files */,
 				28F22CC12F56440300A0FC59 /* leanring-buddy */,
 				28F22CCF2F56440300A0FC59 /* leanring-buddyTests */,
 				28F22CD92F56440300A0FC59 /* leanring-buddyUITests */,
@@ -249,6 +267,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				02D71470DFED4EFB9C13D76D /* KokoroTTSClient.swift in Sources */,
+				8FD88E64E9AE40B9AB9A3746 /* WebSearchClient.swift in Sources */,
+				1177E092738A44CCBDBE0821 /* LocalTTSClient.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

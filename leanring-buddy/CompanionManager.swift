@@ -80,6 +80,14 @@ final class CompanionManager: ObservableObject {
         return LocalTTSClient()
     }()
 
+    private lazy var kokoroTTSClient: KokoroTTSClient = {
+        return KokoroTTSClient()
+    }()
+
+    @Published var isKokoroHealthy = false
+    @Published var isPushToTalkPressed = false
+    @Published var selectionRect: CGRect?
+
     /// Optional web search client for research queries. Silently skips
     /// when no API keys are configured — the app stays fully functional offline.
     private let webSearchClient = WebSearchClient()
@@ -186,6 +194,10 @@ final class CompanionManager: ObservableObject {
         // Eagerly touch the Claude API so its TLS warmup handshake completes
         // well before the onboarding demo fires at ~40s into the video.
         _ = claudeAPI
+
+        Task {
+            isKokoroHealthy = await kokoroTTSClient.healthCheck()
+        }
 
         // If the user already completed onboarding AND all permissions are
         // still granted, show the cursor overlay immediately. If permissions
@@ -298,6 +310,8 @@ final class CompanionManager: ObservableObject {
         transientHideTask?.cancel()
 
         currentResponseTask?.cancel()
+        localTTSClient.stopPlayback()
+        kokoroTTSClient.stopPlayback()
         currentResponseTask = nil
         shortcutTransitionCancellable?.cancel()
         voiceStateCancellable?.cancel()
@@ -481,6 +495,10 @@ final class CompanionManager: ObservableObject {
             // Don't register push-to-talk while the onboarding video is playing
             guard !showOnboardingVideo else { return }
 
+            isPushToTalkPressed = true
+            selectionRect = nil
+            overlayWindowManager.setInterceptsMouseEvents(true)
+
             // Cancel any pending transient hide so the overlay stays visible
             transientHideTask?.cancel()
             transientHideTask = nil
@@ -498,6 +516,7 @@ final class CompanionManager: ObservableObject {
             // Cancel any in-progress response and TTS from a previous utterance
             currentResponseTask?.cancel()
             localTTSClient.stopPlayback()
+            kokoroTTSClient.stopPlayback()
             clearDetectedElementLocation()
 
             // Dismiss the onboarding prompt if it's showing
@@ -530,6 +549,12 @@ final class CompanionManager: ObservableObject {
                 )
             }
         case .released:
+            isPushToTalkPressed = false
+            overlayWindowManager.setInterceptsMouseEvents(false)
+            if let rect = selectionRect, (rect.width < 10 || rect.height < 10) {
+                selectionRect = nil
+            }
+
             // Cancel the pending start task in case the user released the shortcut
             // before the async startPushToTalk had a chance to begin recording.
             // Without this, a quick press-and-release drops the release event and
@@ -596,6 +621,7 @@ final class CompanionManager: ObservableObject {
     private func sendTranscriptToClaudeWithScreenshot(transcript: String) {
         currentResponseTask?.cancel()
         localTTSClient.stopPlayback()
+        kokoroTTSClient.stopPlayback()
 
         currentResponseTask = Task {
             // Stay in processing (spinner) state — no streaming text displayed
@@ -613,9 +639,13 @@ final class CompanionManager: ObservableObject {
                 }
 
                 // Capture all connected screens so the AI has full context
-                let screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
+                let screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG(marqueeRect: selectionRect)
 
                 guard !Task.isCancelled else { return }
+
+                if let crop = screenCaptures.first(where: { $0.cropOffsetInPixels != nil })?.cropOffsetInPixels {
+                    userPromptWithContext += "\n\n(Note: The image provided is a crop from the screen at origin x:\(Int(crop.x)), y:\(Int(crop.y)). Provide coordinates relative to this cropped image.)"
+                }
 
                 // Build image labels with the actual screenshot pixel dimensions
                 // so Claude's coordinate space matches the image it sees. We
@@ -675,10 +705,18 @@ final class CompanionManager: ObservableObject {
                     let displayWidth = CGFloat(targetScreenCapture.displayWidthInPoints)
                     let displayHeight = CGFloat(targetScreenCapture.displayHeightInPoints)
                     let displayFrame = targetScreenCapture.displayFrame
+                    
+                    var pointX = pointCoordinate.x
+                    var pointY = pointCoordinate.y
+                    
+                    if let offset = targetScreenCapture.cropOffsetInPixels {
+                        pointX += offset.x
+                        pointY += offset.y
+                    }
 
                     // Clamp to screenshot coordinate space
-                    let clampedX = max(0, min(pointCoordinate.x, screenshotWidth))
-                    let clampedY = max(0, min(pointCoordinate.y, screenshotHeight))
+                    let clampedX = max(0, min(pointX, screenshotWidth))
+                    let clampedY = max(0, min(pointY, screenshotHeight))
 
                     // Scale from screenshot pixels to display points
                     let displayLocalX = clampedX * (displayWidth / screenshotWidth)
@@ -721,8 +759,17 @@ final class CompanionManager: ObservableObject {
                 // (processing state) until the audio actually starts playing,
                 // then switch to responding.
                 if !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    await localTTSClient.speakText(spokenText)
                     voiceState = .responding
+                    if isKokoroHealthy {
+                        let success = await kokoroTTSClient.speakText(spokenText)
+                        if !success {
+                            isKokoroHealthy = false
+                            Task { isKokoroHealthy = await kokoroTTSClient.healthCheck() }
+                            await localTTSClient.speakText(spokenText)
+                        }
+                    } else {
+                        await localTTSClient.speakText(spokenText)
+                    }
                 }
             } catch is CancellationError {
                 // User spoke again — response was interrupted

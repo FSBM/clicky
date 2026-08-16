@@ -183,6 +183,50 @@ struct BlueCursorView: View {
 
     var body: some View {
         ZStack {
+            // Intercept mouse events for marquee selection when push-to-talk is active
+            if companionManager.isPushToTalkPressed {
+                Color.white.opacity(0.001)
+                    .onAppear { NSCursor.crosshair.push() }
+                    .onDisappear { NSCursor.crosshair.pop() }
+                    .gesture(
+                        DragGesture(minimumDistance: 10)
+                            .onChanged { value in
+                                if dragStart == nil {
+                                    dragStart = value.startLocation
+                                }
+                                dragCurrent = value.location
+                                
+                                if let start = dragStart, let current = dragCurrent {
+                                    let minX = min(start.x, current.x)
+                                    let minY = min(start.y, current.y)
+                                    let maxX = max(start.x, current.x)
+                                    let maxY = max(start.y, current.y)
+                                    
+                                    // Convert to AppKit global coordinate space (bottom-left origin)
+                                    let globalMinX = minX + screenFrame.origin.x
+                                    let globalMinY = screenFrame.height - maxY + screenFrame.origin.y
+                                    
+                                    companionManager.selectionRect = CGRect(x: globalMinX, y: globalMinY, width: maxX - minX, height: maxY - minY)
+                                }
+                            }
+                            .onEnded { _ in
+                                dragStart = nil
+                                dragCurrent = nil
+                            }
+                    )
+            }
+
+            if let rect = companionManager.selectionRect, rect.intersects(screenFrame) {
+                let localMinX = rect.minX - screenFrame.origin.x
+                let localMinY = screenFrame.height - (rect.maxY - screenFrame.origin.y)
+                
+                Rectangle()
+                    .stroke(Color.white.opacity(0.8), style: StrokeStyle(lineWidth: 1, dash: [5]))
+                    .background(Color.white.opacity(0.2))
+                    .frame(width: rect.width, height: rect.height)
+                    .position(x: localMinX + rect.width / 2, y: localMinY + rect.height / 2)
+            }
+
             // Nearly transparent background (helps with compositing)
             Color.black.opacity(0.001)
 
@@ -836,6 +880,17 @@ class OverlayWindowManager {
 
     func isShowingOverlay() -> Bool {
         return !overlayWindows.isEmpty
+    }
+
+    func setInterceptsMouseEvents(_ intercepts: Bool) {
+        for window in overlayWindows {
+            window.ignoresMouseEvents = !intercepts
+            if intercepts {
+                window.invalidateCursorRects(for: window.contentView!)
+            } else {
+                window.invalidateCursorRects(for: window.contentView!)
+            }
+        }
     }
 }
 
